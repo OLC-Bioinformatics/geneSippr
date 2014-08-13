@@ -145,10 +145,9 @@ unless(-e("$folderPath/Unaligned")) {
 }
 
 # Chdir to the working directory
-#$project = "000000000-AAERG";
-print "$folderPath/Unaligned/Project_$flowcell";
-#chdir("$folderPath/Unaligned/Project_$project") or die $!;
-
+$project = "000000000-AAERG";
+#print "$folderPath/Unaligned/Project_$project";
+chdir("$folderPath/Unaligned/Project_$project") or die $!;
 
 my $path = getcwd;
 
