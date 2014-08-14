@@ -17,7 +17,7 @@ my $start_time = time;
 
 # Initialize variables
 my ($sequenceName, $forwardReverse, $geneName, @folders, $fastaTitle, $reads, $investigator, $flowCell, $project, @stats, @presence, @sequence, @categories);
-my (%results, %sampleSheet, %sippr, %targets, %targetLength, %targetCategories);
+my (%results, %sampleSheet, %sippr, %targets, %targetLength, %targetCategories, %targetPresence);
 
 my $lane = 1;
 
@@ -119,9 +119,7 @@ close OUTPUT;
 
 # Find out how many cycles have been completed
 chdir($miSeqPath . "/" . $folder . "/Thumbnail_Images/L001");
-
 my @cycleNum = glob("*C*");
-
 my $cycles = scalar @cycleNum;
 
 # As the number of cycles required is the number of forward reads + the index(8)
@@ -151,7 +149,6 @@ unless(-e("$folderPath/Unaligned")) {
 	system("nohup make -j 16 r1");
 }
 
-
 # Chdir to the working directory
 #$project = "000000000-AAERG";
 chdir("$folderPath/Unaligned/Project_$project") or die $!;
@@ -167,44 +164,20 @@ while (defined(my $file = readdir(DIR))) {
 	if ($file =~ m/Sample_/) {
 		if (-d $path ."/". $file){
 			chdir $path ."/". $file;
-			
 			(my $folder = $file) =~ s/Sample_//g;
-			#(my $unzip = $files[0]) =~ s/.gz//g;
-			#
-			
 			my @files = glob("*.gz");
-#			if (scalar @files == 0) {
-#				next;
-#			}
 			foreach my $fileZ (@files){
 				(my $folder = $fileZ) =~ s/_.*//g;
 				(my $unzip = $fileZ) =~ s/.gz//g;
 				(my $filename = $fileZ) =~ s/_L001|.gz//g;
-				#running_time("Now extracting $filename");
-				#mkdir $folder;
-				#move($file,"$folder/$file");
+				running_time("Now extracting $filename");
 				system("gzip -d $fileZ");
 				if (-f $unzip){unlink "$fileZ"};
-				#move("$folder/$unzip","$folder/$filename");
 			}
 			my @fastqFiles = glob("*.fastq");			
 			make_path("$path/query");
 			(my $filename1 = $fastqFiles[0]) =~ s/_L001//g;
 			copy("$path/$file/$fastqFiles[0]", "$path/query/$filename1");
-			# Right now, the GeneSippr doesn't work with paired-end data. I left this in because maybe someday it will. Just uncomment the lines with $filename2
-			
-#			if (scalar @fastqFiles == 2) {
-#				(my $filename1 = $fastqFiles[0]) =~ s/_L001//g;
-#				#(my $filename2 = $files[1]) =~ s/_L001//g;
-#				copy("$path/$file/$filename1", "$path/query/$filename1");
-#				#copy("$path/$file/$filename2", "$path/query/$filename2");
-#				chdir("$path");
-#			}
-#			elsif (scalar @fastqFiles == 1){
-#				(my $filename = $fastqFiles[0]) =~ s/_L001//g;
-#				copy("$path/$file/$filename", "$path/query/$filename");
-#				chdir("$path");
-#			}
 		}
 	}
 }
@@ -254,7 +227,6 @@ while (my ($category, $targetGenes) = each (%targetCategories)) {
 	}
 }
 
-
 # The files must be in the "query" subfolder. This subfolder must only have sequences that you wish to examine, or the program won't be able to find them
 chdir ("$path/query");
 
@@ -276,18 +248,16 @@ while (scalar(@threads) < @cpus) {
 	}
 }
 
-
 # This loop ensures that each thread is complete before terminating
 foreach (@threads) {
 	my $num = $_->join;
 }
 
-
-
 # Parses the VCF file and returns arrays of the mapping stats, presence/absence of gene targets, and the sequence of each mapped gene target
 foreach my $file (@fastq) {
-	while (my ($category, $targetGenes) = each (%targetCategories)) {
-			foreach my $gene (@$targetGenes) {	
+	foreach my $category (sort keys %targetCategories) {
+		$targetGenes = $targetCategories{$category};
+		foreach my $gene (@$targetGenes) {	
 			my ($stats, $presence, $seq) = parseVCF($file, $category, $gene, \%targetLength);
 			push (@stats, $stats);
 			push (@presence, $presence);
@@ -296,8 +266,52 @@ foreach my $file (@fastq) {
 	}
 }
 
-print Dumper(\@sequence);
+#print Dumper(\@sequence);
 
+my $reportPath = $path . "/reports";
+make_path($reportPath, {owner => "blais", group => "blais", mode => 0777});
+chdir("$reportPath");
+
+open(REPORT, ">", "GeneSipprReport" . $start_time . ".csv") or die $!;
+
+print REPORT "Strain\t";
+
+system("pwd");
+
+foreach my $category (sort keys %targetCategories) {
+	$targetGenes = $targetCategories{$category};
+	foreach my $gene (sort { lc($a) cmp lc($b) } @$targetGenes) {
+		(my $geneName = $gene) =~ s/.fa//;
+		print REPORT "$geneName\t";
+	}
+}
+
+# Use @presence to properly format %targetPresence for the creation of a report
+# $targetPresence{$fileName}{$category}{$geneName} = "+";
+foreach my $component (sort @presence) {
+	my %presence = %$component;
+	foreach my $fName (sort keys %presence) {
+		foreach my $cat (sort keys % {$presence{$fName}}) {
+			while (my ($gName, $pres) = each ( % {$presence{$fName}{$cat}})) {
+				$targetPresence{$fName}{$cat}{$gName} = $pres;
+			}
+		}
+	}
+}
+
+foreach my $fName (sort keys %targetPresence) {
+	print REPORT "\n$fName\t";
+	foreach my $cat (sort keys % {$targetPresence{$fName}}) {
+		foreach my $gName (sort { lc($a) cmp lc($b) } keys % {$targetPresence{$fName}{$cat}}) {
+			my $pres = $targetPresence{$fName}{$cat}{$gName};
+			print REPORT "$pres\t";
+		}
+	}
+}
+
+close REPORT;
+
+#print Dumper(\%targetPresence);
 # Return the run time
 my $end_time = time;
 my $total_time = $end_time - $start_time;
@@ -308,7 +322,7 @@ print "The total run time was $legible_time seconds.\n\n";
 
 exit;
 
-###############################################################################
+##########################################################
 sub rawMapping {
 	my ($path, $filesPath, $rawFile, $category, $gene) = @_;
 	(my $geneName = $gene) =~ s/.fa//;
@@ -335,7 +349,7 @@ sub rawMapping {
 	# Creates a vcf file from which all relevant sequence data/metadata can be extracted
 	unless (-e("$name" . "_sorted.vcf")) {
 		print "Creating vcf files\n";
-		system("samtools mpileup -A -BQ0 -d 1000000 -uf $filesPath/$gene $name" . "_sorted.bam | bcftools view -cg - > $name" . "_sorted.vcf")
+		system("samtools mpileup -A -BQ0 -d 1000000 -uf $filesPath/$category/$gene $name" . "_sorted.bam | bcftools view -cg - > $name" . "_sorted.vcf")
 	}
 }
 
@@ -517,7 +531,6 @@ sub parseVCF {
 	} else {
 		$targetPresence{$fileName}{$category}{$geneName} = "-";
 	}
-	
 	#Return the hashes
 	return(\%rawStats, \%targetPresence, \%sequence);
 }
