@@ -1,4 +1,4 @@
-#usr/bin/perl
+#! usr/bin/perl
 
 use warnings;
 #use strict;
@@ -62,6 +62,7 @@ while (<SHEET>) {
 	# Grab the investigator name - perhaps because the input file is a CSV, the chop function (x2) seems to be required to format the cells properly
 	if (/Investigator Name/) {
 		($investigator = $_) =~ s/Investigator Name,//;
+		$investigator =~ s/,//g;
 		chop $investigator;
 		chop $investigator;
 	}
@@ -75,6 +76,7 @@ while (<SHEET>) {
 		while (<SHEET>) {
 			# reads1 will be the first cell
 			$reads = $_;
+			$reads =~ s/,//g;
 			# Get rid of \n
 			chomp $reads;
 			# Exit the loop, as we have the value for reads1
@@ -86,11 +88,13 @@ while (<SHEET>) {
 		while (<SHEET>) {
 			#print "$_";
 			my @line = split(/,/);
+			
 			# $line[5], $line[7]: index 1 and 2, respectively. $line[9]: description
 			###
 			#chop $line[5]; chop $line[7];
 			chop $line[9]; chop $line[9];
-			$project = $line[8];
+			#$project = $line[8];
+$project = "OLC-F-1309";
 			#my $index = $line[5];
 			my $index = $line[5] . "-" . $line[7];
 			print OUTPUT "$flowCell,", 	# flowcell
@@ -117,7 +121,7 @@ my @cycleNum = glob("*C*");
 my $cycles = scalar @cycleNum;
 
 # As the number of cycles required is the number of forward reads + the index(8)
-my $readsNeeded = $reads + 8;
+my $readsNeeded = $reads + 17;
 
 # A while loop that waits until the required number of cycles has been achieved
 while ($cycles < $readsNeeded) {
@@ -133,7 +137,8 @@ my $numReads = $reads + 0;
 
 # Sets the base-mask string, which is important for determining which bases to use from each run
 #my $baseMask = "Y" . $numReads . ",I8,n*,n*";
-my $baseMask = "Y" . $numReads . ",I8,I8,n*";
+#my $baseMask = "Y" . $numReads . ",I8,I8,n*";
+my $baseMask = "Y21n*,I8,I8,n*";
 
 # Call configureBclToFastq.pl - in order to prevent the compression of the fastq files, I had to manually edit the Config.mk file in /usr/local/share/bcl2fastq-1.8.3/makefiles to not include the compression and compression suffix (commented out lines 174 and 175)
 unless(-e("$folderPath/Unaligned")) {
@@ -145,7 +150,7 @@ unless(-e("$folderPath/Unaligned")) {
 }
 
 # Chdir to the working directory
-$project = "000000000-AAERG";
+#$project = "000000000-AAERG";
 #print "$folderPath/Unaligned/Project_$project";
 chdir("$folderPath/Unaligned/Project_$project") or die $!;
 
@@ -183,7 +188,6 @@ while (defined(my $file = readdir(DIR))) {
 			my @fastqFiles = glob("*.fastq");			
 			make_path("$path/query");
 			(my $filename1 = $fastqFiles[0]) =~ s/_L001//g;
-			print "fastq files\n";
 			print join("\n", @fastqFiles);
 			copy("$path/$file/$fastqFiles[0]", "$path/query/$filename1");
 			# Right now, the GeneSippr doesn't work with paired-end data. I left this in because maybe someday it will. Just uncomment the lines with $filename2
@@ -207,7 +211,7 @@ while (defined(my $file = readdir(DIR))) {
 print "Processing fastq files\n";
 # Get the target files from the folder
 #my $filesPath = "/media/nas/akoziol/WGS/RawReadSipping/target";
-my $filesPath = "/home/blais/git/RawReadSipping/target";
+my $filesPath = "/home/blais/git/RawReadSipping/oldTarget";
 chdir ("$filesPath");
 my @targetGenes = glob("*.fa");
 

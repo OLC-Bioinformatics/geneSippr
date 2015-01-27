@@ -1,4 +1,4 @@
-#usr/bin/perl
+#!usr/bin/perl
 
 use warnings;
 #use strict;
@@ -11,6 +11,7 @@ use Bio::SeqIO;
 use File::Copy;
 use Data::Dumper qw(Dumper);
 use Statistics::Basic qw(:all);
+use List::MoreUtils qw(uniq);
 
 # This start time will be used in calculating the total time of the run
 my $start_time = time;
@@ -28,9 +29,9 @@ chomp @cpus;
 # This section finds the most recent run folder on the MiSeq and determines which cycle the run is currently on
 # NB: This script must be run after the run has been initialised, or the wrong folder will be identified as the current folder, and this will not work!
 ###
-#my $miSeqPath = "/media/miseq/MiSeqOutput";
+my $miSeqPath = "/media/miseq/MiSeqOutput";
 #my $miSeqPath = "/media/nas/akoziol/Raw_read_sipping/runData";
-my $miSeqPath = "/media/nas";
+#my $miSeqPath = "/media/nas/backup/MiSeq/MiSeqOutput";
 chdir($miSeqPath);
 
 # Grab all the folders
@@ -38,17 +39,19 @@ my @miSeqFolders = glob("*");
 
 # Since the folders are all named starting with the date, they can be sorted (from highest to lowest) and the first folder will be the current run
 @miSeqFolders = sort{$b cmp $a}(@miSeqFolders);
-#my $folder = $miSeqFolders[0];
-my $folder = "140325_M02466_0010_000000000-A8MVB";
+my $folder = $miSeqFolders[0];
 
+#my $folder = "141107_M02466_0038_000000000-AARUP";
+#my $folder = "140818_M02466_0024_000000000-A78YN";
+print "$folder\n";
 # Get the flowcell ID from the end of the folder name
 $folder =~ /.+_.+_.+_(\S+)/;
 $flowCell = $1;
 
 # As this run will not be performed connected to the NAS, the path will have to be modified
 #my $folderPath = "/media/nas/akoziol/WGS/RawReadSipping/$folder";
-#my $folderPath = "/media/nas/akoziol/Raw_read_sipping/Sandbox/$folder";
-my $folderPath = "/home/blais/git/RawReadSipping/Sandbox/$folder";
+my $folderPath = "/media/nas/akoziol/GeneSipping/$folder";
+#my $folderPath = "/home/blais/git/RawReadSipping/Sandbox/$folder";
 
 
 # Make the appropriate folder in the required location - I'm not sure whether the permissions section at the end is necessary - it worked when I was trying to make it work, so, for now, it stays
@@ -69,7 +72,7 @@ while (<SHEET>) {
 		($investigator = $_) =~ s/Investigator Name,//;
 		$investigator =~ s/,//g;
 		chomp $investigator;
-		#chop $investigator;
+		chop $investigator;
 	}
 	# The reads counts are set up as follows:
 	# [Reads]\n
@@ -91,15 +94,12 @@ while (<SHEET>) {
 	# As above - find [Data], then proceed reading through SHEET
 	if (/Sample_ID/) {
 		while (<SHEET>) {
-			#print "$_";
 			my @line = split(/,/);
 			# $line[5], $line[7]: index 1 and 2, respectively. $line[9]: description
 			###
-			#chop $line[5]; chop $line[7];
 			chop $line[9]; chop $line[9];
 			$project = $line[8];
-			my $index = $line[5];
-			#my $index = $line[5] . "-" . $line[7];
+			my $index = $line[5] . "-" . $line[7];
 			print OUTPUT "$flowCell,", 	# flowcell
 						 "$lane,",			# lane 1
 						 "$line[0],",  	# sample ID
@@ -123,7 +123,8 @@ my @cycleNum = glob("*C*");
 my $cycles = scalar @cycleNum;
 
 # As the number of cycles required is the number of forward reads + the index(8)
-my $readsNeeded = $reads + 8;
+#my $readsNeeded = $reads + 8;
+my $readsNeeded = $reads + 17;
 
 # A while loop that waits until the required number of cycles has been achieved
 while ($cycles < $readsNeeded) {
@@ -139,19 +140,25 @@ my $numReads = $reads + 0;
 
 # Sets the base-mask string, which is important for determining which bases to use from each run
 #my $baseMask = "Y" . $numReads . ",I8,n*,n*";
-my $baseMask = "Y" . $numReads . "n*,I8,n*,n*";
+
+#my $baseMask = "Y" . $numReads . ",I8,I8,n*";
+#my $baseMask = "Y" . $numReads . "n*,I8,I8,Y193,n*";
+#my $baseMask = "Y" . $numReads . "n*,I8,I8,n*";
+my $baseMask = "Y100n*,I8,I8,n*";
+#my $baseMask = "Y21n*,I8,I8,Y175n*";
 
 # Call configureBclToFastq.pl - in order to prevent the compression of the fastq files, I had to manually edit the Config.mk file in /usr/local/share/bcl2fastq-1.8.3/makefiles to not include the compression and compression suffix (commented out lines 174 and 175)
-unless(-e("$folderPath/Unaligned")) {
+unless(-e("$folderPath/100mers")) {
 	print "Calling script\n";
-	system("configureBclToFastq.pl --input-dir $miSeqPath/$folder/Data/Intensities/BaseCalls/ --output-dir $folderPath/Unaligned --force --sample-sheet $folderPath/SampleSheet_modified.csv --mismatches 1 --no-eamss --fastq-cluster-count 0 --compression none --use-bases-mask $baseMask");
-	chdir("$folderPath/Unaligned");
+	system("configureBclToFastq.pl --input-dir $miSeqPath/$folder/Data/Intensities/BaseCalls/ --output-dir $folderPath/100mers --force --sample-sheet $folderPath/SampleSheet_modified.csv --mismatches 1 --no-eamss --fastq-cluster-count 0 --compression none --use-bases-mask $baseMask");
+	chdir("$folderPath/100mers");
 	system("nohup make -j 16 r1");
+#	system("nohup make -j 16");
 }
 
 # Chdir to the working directory
 #$project = "000000000-AAERG";
-chdir("$folderPath/Unaligned/Project_$project") or die $!;
+chdir("$folderPath/100mers/Project_$project") or die $!;
 
 my $path = getcwd;
 
@@ -170,22 +177,25 @@ while (defined(my $file = readdir(DIR))) {
 				(my $folder = $fileZ) =~ s/_.*//g;
 				(my $unzip = $fileZ) =~ s/.gz//g;
 				(my $filename = $fileZ) =~ s/_L001|.gz//g;
-				running_time("Now extracting $filename");
 				system("gzip -d $fileZ");
 				if (-f $unzip){unlink "$fileZ"};
 			}
-			my @fastqFiles = glob("*.fastq");			
+			my @fastqFiles = glob("*001.fastq");			
 			make_path("$path/query");
 			(my $filename1 = $fastqFiles[0]) =~ s/_L001//g;
-			copy("$path/$file/$fastqFiles[0]", "$path/query/$filename1");
+			(my $filename2 = $fastqFiles[0]) =~ s/_L001_R1_001.fastq//g;
+			unless (-e ("$path/query/$filename2" . "_combined.fastq")) {
+				system("cat $fastqFiles[0] $fastqFiles[1] > $filename2" . "_combined.fastq");
+				copy("$path/$file/$filename2" . "_combined.fastq", "$path/query/$filename2" . "_combined.fastq");
+			}
 		}
 	}
 }
-
 print "Processing fastq files\n";
 # Get the target files from the folder
 #my $filesPath = "/media/nas/akoziol/WGS/RawReadSipping/target";
 my $filesPath = "/home/blais/git/RawReadSipping/target";
+#my $filesPath = "/home/blais/git/RawReadSipping/oldTarget";
 chdir ("$filesPath");
 
 # Get the names of the two folder with target sequences
@@ -195,11 +205,13 @@ while (defined(my $file = readdir(DIR))) {
 	next if $file =~ /^\.\.?$/;
 	# Ignore folders without sequence data
 	next if $file =~ /holding/;
-	if (-d $filesPath . "/" . $file) {
-		push(@categories, $file);
-		chdir $filesPath . "/" . $file;
-		my @targetGenes = glob("*.fa");
-		$targetCategories{$file} = \@targetGenes;
+	if ($file =~ /test0/) {
+		if (-d $filesPath . "/" . $file) {
+			push(@categories, $file);
+			chdir $filesPath . "/" . $file;
+			my @targetGenes = glob("*.fa");
+			$targetCategories{$file} = \@targetGenes;
+	}
 	}
 }
 
@@ -211,7 +223,7 @@ while (my ($category, $targetGenes) = each (%targetCategories)) {
 		# Perform smalt indexing of the target genes (if necessary) - it might eventually be advisable to play around with the k-mer and step sizes in this command
 		(my $geneName = $gene) =~ s/.fa//;
 		unless (-e ("$geneName.smi")) {
-			system ("smalt index -k 20 -s 1 $geneName $gene");
+			system ("smalt index -k 5 -s 1 $geneName $gene");
 		}
 		# Create the index .fai file for use in mapping
 		unless (-e ("$geneName.fai")) {
@@ -266,25 +278,21 @@ foreach my $file (@fastq) {
 	}
 }
 
-#print Dumper(\@sequence);
 
+# Print results to report - make appropriate path, and open file
 my $reportPath = $path . "/reports";
 make_path($reportPath, {owner => "blais", group => "blais", mode => 0777});
 chdir("$reportPath");
 
 open(REPORT, ">", "GeneSipprReport" . $start_time . ".csv") or die $!;
 
-print REPORT "Strain\t";
 
-system("pwd");
+# Custom hash ordering courtesy of:
+# http://stackoverflow.com/questions/8171528/in-perl-how-can-i-sort-hash-keys-using-a-custom-ordering
+my @order = qw (O26 O45 O103 O111 O121 O145 O157 eae VT1 VT2 hlyA adk dinB fumC gyrB icd icdA mdh pabB polB purA putP recA trpA trpB uidA);
+my %order_map = map { $order[$_] => $_ } 0 .. $#order;
+my $pat = join '|', @order;
 
-foreach my $category (sort keys %targetCategories) {
-	$targetGenes = $targetCategories{$category};
-	foreach my $gene (sort { lc($a) cmp lc($b) } @$targetGenes) {
-		(my $geneName = $gene) =~ s/.fa//;
-		print REPORT "$geneName\t";
-	}
-}
 
 # Use @presence to properly format %targetPresence for the creation of a report
 # $targetPresence{$fileName}{$category}{$geneName} = "+";
@@ -299,19 +307,41 @@ foreach my $component (sort @presence) {
 	}
 }
 
+# Similar to custom ordering above, but the quality and pathogen genes are separated into separate arrays
+my @qualityArray = qw (adk dinB fumC gyrB icd icdA mdh pabB polB purA putP recA trpA trpB uidA);
+my @pathoArray = qw (O26 O45 O103 O111 O121 O145 O157 eae VT1 VT2 hlyA);
+my @pathoPres;
+my $countQuality = 0;
+print REPORT "Strain\t";
+print REPORT join("\t", @order);
+print REPORT "\tPathotype\t";
+print REPORT "Quality Pass/Total\t";
+
 foreach my $fName (sort keys %targetPresence) {
 	print REPORT "\n$fName\t";
 	foreach my $cat (sort keys % {$targetPresence{$fName}}) {
-		foreach my $gName (sort { lc($a) cmp lc($b) } keys % {$targetPresence{$fName}{$cat}}) {
+		$countQuality = 0;
+		foreach my $gName (sort { my ($x, $y) = map /^($pat)/, $a, $b; $order_map{$x} <=> $order_map{$y}} keys %{ $targetPresence{$fName}{$cat} }) { # see URL above for some idea what's going on
 			my $pres = $targetPresence{$fName}{$cat}{$gName};
 			print REPORT "$pres\t";
+			if ($pres eq "+" and $gName ~~ @qualityArray) {
+				$countQuality++;
+			} elsif ($pres eq "+" and $gName ~~ @pathoArray) {
+				push(@pathoPres, $gName);
+			}
 		}
+		if (scalar @pathoPres) {
+			print REPORT join(";", @pathoPres);
+		} else {
+			print REPORT "NA"
+		}
+		print REPORT "\t$countQuality" . "/" . scalar @qualityArray . "\t";
+		undef @pathoPres;
 	}
 }
 
 close REPORT;
 
-#print Dumper(\%targetPresence);
 # Return the run time
 my $end_time = time;
 my $total_time = $end_time - $start_time;
@@ -327,13 +357,15 @@ sub rawMapping {
 	my ($path, $filesPath, $rawFile, $category, $gene) = @_;
 	(my $geneName = $gene) =~ s/.fa//;
 	(my $file = $rawFile) =~ s/_R1_001.fastq//;
+	(my $rawFile1 = $rawFile) =~ s/R1_001/R2_001/;
+	my $name = "$file" . "_$geneName";
+	
 	make_path("$path/results/tmp");
 	chdir ("$path/results/tmp");
-	my $name = "$file" . "_$geneName";
 	
 	# Perform smalt mapping
 	unless (-e ("$path/results/tmp/$name.bam")) {
-		system("smalt map -f bam -o $path/results/tmp/$name.bam -n 24 $filesPath/$category/$geneName $path/query/$rawFile");
+		system("smalt map -f bam -n 24 -o $path/results/tmp/$name.bam $filesPath/$category/$geneName $path/query/$rawFile");
 	}
 
 	# Sort the bam file
@@ -358,17 +390,18 @@ sub parseVCF {
 	my ($rawFile, $category, $gene, $tLength) = @_;
 	my %targetLength = %$tLength;
 	# Initialise variables
-	my $count = 0;
+	my ($count, $counts, $matchBoolean) = 0;
 	my ($targetLength, $sequence, $match, $depth, $prevValue, $avgQual, $stdQual, $avgCov, $stdCov, $avgID, $lengthRatio);
-	my (@quality, @coverage, @identity);
-	my (%rawStats, %targetPresence, %sequence);
+	my (@quality, @coverage, @identity, @depth);
+	my (%rawStats, %targetPresence, %sequence, %matchCount, %matchTally);
+	my $curPath = getcwd;
 	
 	# Manipulate variable data for easy formatting
 	(my $geneName = $gene) =~ s/.fa//;
 	(my $file = $rawFile) =~ s/_R1_001.fastq//;
 	(my $fileName = $file) =~ s/_.+//g;
 	my $name = "$file" . "_$geneName";
-	
+	my $useSeq;
 	# Parse the vcf file
 	# Remove the index sequence and gene target which follow the strain name. These were added to the file names in the mapping process (e.g. 2014-SEQ-121_AAGAGGCA_adk)
 	(my $noIndex = $name) =~ s/_.+//g;
@@ -395,7 +428,7 @@ sub parseVCF {
 			} else {
 				# Depth of coverage is reported prior to the first ";"
 				($depth = $splitInfo[0]) =~ s/DP=//;
-				
+				push(@depth, $depth);
 				# If $pos > $count, then there is a gap in the mapping (or a deletion, but ignoring
 	            # this possibility for now). For my purposes, I want to have data reported for
 	            # every position, whether it is present in the vcf file or not, so I will use count
@@ -409,25 +442,30 @@ sub parseVCF {
 	                    my $matchAdj = 0;
 	                    my $qualAdj = 0;
 	                    my $DPAdj = 0;
+	                    
 	                    push(@quality, $qualAdj);
 	                    push(@coverage, $DPAdj);
 	                    push(@identity, $matchAdj);
+	                    
+	                    $useSeq = $seqAdj;
 	                    $sequence .= $seqAdj;
 	                    $count++;
 	                    if ($pos == $count) {
 	                    	# This match shouldn't technically be 1, but I don't want to recreate the entire 30 line loop right now
-	                    	# I'll eventually make it into a subroutine, and chances are, 99% of the time, $mapSeq eq "."
+	                    	# I'll eventually make it into a subroutine, and chances are, 99.9% of the time, $mapSeq eq "."
 	                    	$match = 1;
+							$useSeq = $refSeq;
+	                    	$sequence .= $refSeq;
 	                    	push(@quality, $qual);
 	                    	push(@coverage, $depth);
 	                    	push(@identity, $match);
-	                    	$count++;
 	                    }
 	                }
 				} else {
 					# If the called base ($mapSeq) is identical to the reference base ($refSeq)
             		# - denoted by a ".", then append $refSeq to $sequence, and set $match to 1
 					if ($mapSeq eq ".") {
+						$useSeq = $refSeq;
 						$sequence .= $refSeq;
 						$match = 1;
 					} else {
@@ -442,12 +480,14 @@ sub parseVCF {
 	                		$prevValue = 0;
 	                	}
 	                	if ($qual <= $prevValue) {
+	                		$useSeq = $refSeq;
 	                		$sequence .= $refSeq;
 	                		$match = 1;
 	                	} else {
 	                		# This attempts to catch if there are two ambiguous bases in a row;
 	                    	# they will hopefully have the same value
 	                    	if ($qual == $prevValue) {
+	                    		$useSeq = $refSeq;
 	                    		$sequence .= $refSeq;
 	                    		$match = 1;
 	                    	} else {
@@ -456,9 +496,11 @@ sub parseVCF {
 	                            if ($qual > $prevValue) {
 	                            	if (length($mapSeq) > 1) {
 	                					my $firstBase = split(",", $mapSeq);
+	                					$useSeq = $firstBase;
 	                					$sequence .= $firstBase;
 	                					$match = 0;
 	                				} else {
+	                					$useSeq = $mapSeq;
 	                            		$sequence .= $mapSeq;
 	                            		$match = 0;
 	                				}
@@ -470,7 +512,6 @@ sub parseVCF {
 					push(@quality, $qual);
 	                push(@coverage, $depth);
 	                push(@identity, $match);
-	                $count++;
 				}
 			}
 		}
@@ -516,6 +557,45 @@ sub parseVCF {
 	# Populate the data hash
 	$rawStats{$fileName}{$category}{$geneName}{$avgID}{$lengthRatio}{$avgCov} = $stdCov;
 	
+	# This array search for unique depth values - this shows that two or more unique reads have been mapped to 
+	# the sequence. This will be used below in calculating the presence/absence of gene targets 
+	my @uniqueDepth = uniq @depth;
+
+	# Calculates the gap size
+	foreach my $position (@coverage) {
+		if ($position >= 1) {
+			$matchBoolean = 0;
+		} elsif ($position =~ /0/ and $matchBoolean == 0) {
+			$counts++;
+			$matchBoolean = 1;
+			$matchCount{$fileName}{$counts}{$position}++;
+		} else {
+			$matchCount{$fileName}{$counts}{$position}++;
+			}
+		}
+	# Calculates gap frequency
+	foreach my $fName (sort keys %matchCount) {
+		foreach my $counted (sort keys %{ $matchCount{$fName} }) {
+			while (my ($pos, $size) = each (%{ $matchCount{$fName}{$counted} })) {
+				$matchTally{$fName}{$size}++;
+			}
+		}
+	}
+	
+	# Print the calculated gap sizes and gap frequencies to file
+	open (MATCH, ">", $fileName . "_gaps.csv");
+	print MATCH "$fileName,GapSize,GapFrequency\n"; 
+	foreach my $fName (sort keys %matchTally) {
+		while (my ($size, $frequency) = each ( %{ $matchTally{$fName} })) {
+			print MATCH "$fName,$size,$frequency\n";
+		}
+	}
+	
+	close MATCH;
+
+	# Creates a figure of the coverage of each target -uncomment if desired
+	#system("/home/blais/git/RawReadSipping/gapGraphing.R $curPath $fileName");
+
 	# Populate the sequence hash
 	# Ensure that $sequence exists, otherwise, just indicate the lack of sequence as "" in the hash
 	if ($sequence) {
@@ -525,13 +605,14 @@ sub parseVCF {
 	}
 	
 	# Populate the presence/absence hash
-	# Using a cut-off of 70% right now - this may be increased later
-	if ($avgID > 70) {
+	# Using double cut-off now: either greater than 55% or there are two unique reads present in the vcf file
+	if (($avgID < 55 and scalar @uniqueDepth > 1) or ($avgID > 55)) {
 		$targetPresence{$fileName}{$category}{$geneName} = "+";
 	} else {
 		$targetPresence{$fileName}{$category}{$geneName} = "-";
 	}
-	#Return the hashes
+	
+	# Return the hashes
 	return(\%rawStats, \%targetPresence, \%sequence);
 }
 
@@ -541,13 +622,4 @@ sub running_time {
 	my $time =  localtime;
 	my $hms = "[" . $time->hms . "] @_\n";
 	print $hms;
-}
-
-#################################################################
-sub commas {
-	my $sepchar = grep(/,/ => @_) ? ";" : ",";
-	(@_ == 0) ? ''			:
-	(@_ == 1) ? $_[0]		:
-	(@_ == 2) ? join(", ", @_)	:
-		    join("$sepchar ", @_[0 .. ($#_-1)], "$_[-1]");
 }
