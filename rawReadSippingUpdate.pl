@@ -12,12 +12,13 @@ use File::Copy;
 use Data::Dumper qw(Dumper);
 use Statistics::Basic qw(:all);
 use List::MoreUtils qw(uniq);
+use Getopt::ArgParse;
 
 # This start time will be used in calculating the total time of the run
 my $start_time = time;
 
 # Initialize variables
-my ($sequenceName, $forwardReverse, $geneName, @folders, $fastaTitle, $reads, $investigator, $flowCell, $project, @stats, @presence, @sequence, @categories);
+my ($sequenceName, $forwardReverse, $geneName, @folders, $fastaTitle, $reads, $investigator, $flowCell, $project, @stats, @presence, @sequence, @categories, @miSeqDirectories);
 my (%results, %sampleSheet, %sippr, %targets, %targetLength, %targetCategories, %targetPresence);
 
 my $lane = 1;
@@ -26,42 +27,75 @@ my $lane = 1;
 my @cpus = `awk '/^processor/ { N++} END { print N }' /proc/cpuinfo`;
 chomp @cpus;
 
+# Adds an argument parser to allow the user to easily specify certain variables
+$ap = Getopt::ArgParse->new_parser(
+        prog        => $0,
+        description => 'Creates per-read FASTQ files using per-cycle BCL basecall files with the bcl2fastq package from Illumina. Reference maps FASTQ reads to target files in order to
+determine presence/absence of pathogenicity and quality assurance genes',
+    epilog      => 'Requires bcl2fastq, smalt, samtools, as well as bcftools',
+ );
+
+# , default=> 21
+$ap->add_arg('--miseqPath', '-m', required => 1, help => 'The path of the folder that contains the run data');
+$ap->add_arg('--folderPath', '-f', required => 1, help => 'The path of the folder in which to place the output folder');
+$ap->add_arg('--outPath', '-o', required => 1, help => 'The name of the output folder');
+$ap->add_arg('--targetPath', '-t', required => 1, help => 'The path of the folder that contains the target sequences');
+$ap->add_arg('--readLength', '-r', required => 0, help => 'Optional. Specify the the length of forward reads to use');
+$ap->add_arg('--project', '-p', required => 0, help => 'Optional. Specify the name of the project');
+
+
+$ns = $ap->parse_args();
+
+my $miSeqPath = $ns->miseqPath;
+my $folderPath = $ns->folderPath;
+my $outPath = $ns->outPath;
+my $filesPath = $ns->targetPath;
+
+# Parse the optional arguments
+if ($ns->readLength) {
+	$reads = $ns->readLength;
+}
+
+if ($ns->project) {
+	$project = $ns->project;
+}
+
+print "$folderPath $miSeqPath $reads\n";
+
 # This section finds the most recent run folder on the MiSeq and determines which cycle the run is currently on
 # NB: This script must be run after the run has been initialised, or the wrong folder will be identified as the current folder, and this will not work!
-###
-my $miSeqPath = "/media/miseq/MiSeqOutput";
-#my $miSeqPath = "/media/nas/akoziol/Raw_read_sipping/runData";
-#my $miSeqPath = "/media/nas/backup/MiSeq/MiSeqOutput";
+
 chdir($miSeqPath);
 
-# Grab all the folders
+# Grab all the files in $miSeqPath
 my @miSeqFolders = glob("*");
 
+# Ensure that you are in fact working with a directory
+foreach (@miSeqFolders) {
+	if (-d $_) {
+		push(@miSeqDirectories, $_);
+	}
+}
+
 # Since the folders are all named starting with the date, they can be sorted (from highest to lowest) and the first folder will be the current run
-@miSeqFolders = sort{$b cmp $a}(@miSeqFolders);
+@miSeqFolders = sort{$b cmp $a}(@miSeqDirectories);
+
 my $folder = $miSeqFolders[0];
 
-#my $folder = "141107_M02466_0038_000000000-AARUP";
-#my $folder = "140818_M02466_0024_000000000-A78YN";
 print "$folder\n";
 # Get the flowcell ID from the end of the folder name
 $folder =~ /.+_.+_.+_(\S+)/;
 $flowCell = $1;
 
-# As this run will not be performed connected to the NAS, the path will have to be modified
-#my $folderPath = "/media/nas/akoziol/WGS/RawReadSipping/$folder";
-my $folderPath = "/media/nas/akoziol/GeneSipping/$folder";
-#my $folderPath = "/home/blais/git/RawReadSipping/Sandbox/$folder";
+# Make the appropriate folder in the required location - append the folder name to $folderPath
+$folderPath .= "/" . $folder;
+make_path($folderPath);
 
-
-# Make the appropriate folder in the required location - I'm not sure whether the permissions section at the end is necessary - it worked when I was trying to make it work, so, for now, it stays
-make_path($folderPath, {owner => "blais", group => "blais", mode => 0777});
-
+# Open the modified sample sheet and write the headers
 open(OUTPUT, ">", "$folderPath/SampleSheet_modified.csv") or die $!;
-#system("chown blais:blais $folderPath/SampleSheet_modified.csv");
-#system ("chmod 777 $folderPath/SampleSheet_modified.csv");
 print OUTPUT "FCID,Lane,SampleID,SampleRef,Index,Description,Control,Recipe,Operator,SampleProject\n";
 
+# Change to the appropriate directory
 chdir($miSeqPath . "/" . $folder);
 
 # Open the parameters file to determine the run length - this is necessary, as we will be pulling data once the first index has been processed (just over halfway through the run)
@@ -83,10 +117,12 @@ while (<SHEET>) {
 		# Then start going through SHEET again
 		while (<SHEET>) {
 			# reads1 will be the first cell
-			$reads = $_;
-			# Get rid of \n
-			chomp $reads;
-			$reads =~ s/,//g;
+			if (not $ns->readLength) {
+				$reads = $_;
+				# Get rid of \n
+				chomp $reads;
+				$reads =~ s/,//g;
+			}
 			# Exit the loop, as we have the value for reads1
 			last;
 		}
@@ -98,7 +134,10 @@ while (<SHEET>) {
 			# $line[5], $line[7]: index 1 and 2, respectively. $line[9]: description
 			###
 			chop $line[9]; chop $line[9];
-			$project = $line[8];
+			if (not $ns->project) {
+				$project = $line[8];	
+			}
+			
 			my $index = $line[5] . "-" . $line[7];
 			print OUTPUT "$flowCell,", 	# flowcell
 						 "$lane,",			# lane 1
@@ -114,6 +153,7 @@ while (<SHEET>) {
 	}
 }
 
+# Close the open files
 close SHEET;
 close OUTPUT;
 
@@ -122,8 +162,7 @@ chdir($miSeqPath . "/" . $folder . "/Thumbnail_Images/L001");
 my @cycleNum = glob("*C*");
 my $cycles = scalar @cycleNum;
 
-# As the number of cycles required is the number of forward reads + the index(8)
-#my $readsNeeded = $reads + 8;
+# As the number of cycles required is the number of forward reads + the index(8) + the second index(8) + 1 (just to be safe)
 my $readsNeeded = $reads + 17;
 
 # A while loop that waits until the required number of cycles has been achieved
@@ -139,26 +178,19 @@ while ($cycles < $readsNeeded) {
 my $numReads = $reads + 0;
 
 # Sets the base-mask string, which is important for determining which bases to use from each run
-#my $baseMask = "Y" . $numReads . ",I8,n*,n*";
-
-#my $baseMask = "Y" . $numReads . ",I8,I8,n*";
-#my $baseMask = "Y" . $numReads . "n*,I8,I8,Y193,n*";
-#my $baseMask = "Y" . $numReads . "n*,I8,I8,n*";
-my $baseMask = "Y100n*,I8,I8,n*";
-#my $baseMask = "Y21n*,I8,I8,Y175n*";
+my $baseMask = "Y" . $numReads . "n*,I8,I8,n*";
 
 # Call configureBclToFastq.pl - in order to prevent the compression of the fastq files, I had to manually edit the Config.mk file in /usr/local/share/bcl2fastq-1.8.3/makefiles to not include the compression and compression suffix (commented out lines 174 and 175)
-unless(-e("$folderPath/100mers")) {
+unless(-e("$folderPath/$outPath")) {
 	print "Calling script\n";
-	system("configureBclToFastq.pl --input-dir $miSeqPath/$folder/Data/Intensities/BaseCalls/ --output-dir $folderPath/100mers --force --sample-sheet $folderPath/SampleSheet_modified.csv --mismatches 1 --no-eamss --fastq-cluster-count 0 --compression none --use-bases-mask $baseMask");
-	chdir("$folderPath/100mers");
+	system("configureBclToFastq.pl --input-dir $miSeqPath/$folder/Data/Intensities/BaseCalls/ --output-dir $folderPath/$outPath --force --sample-sheet $folderPath/SampleSheet_modified.csv --mismatches 1 --no-eamss --fastq-cluster-count 0 --compression none --use-bases-mask $baseMask");
+	chdir("$folderPath/$outPath");
+	# If you decide to change $baseMask to include reads from both directions, remove the r1 in the command below
 	system("nohup make -j 16 r1");
-#	system("nohup make -j 16");
 }
 
 # Chdir to the working directory
-#$project = "000000000-AAERG";
-chdir("$folderPath/100mers/Project_$project") or die $!;
+chdir("$folderPath/$outPath/Project_$project") or die $!;
 
 my $path = getcwd;
 
@@ -184,18 +216,16 @@ while (defined(my $file = readdir(DIR))) {
 			make_path("$path/query");
 			(my $filename1 = $fastqFiles[0]) =~ s/_L001//g;
 			(my $filename2 = $fastqFiles[0]) =~ s/_L001_R1_001.fastq//g;
-			unless (-e ("$path/query/$filename2" . "_combined.fastq")) {
-				system("cat $fastqFiles[0] $fastqFiles[1] > $filename2" . "_combined.fastq");
-				copy("$path/$file/$filename2" . "_combined.fastq", "$path/query/$filename2" . "_combined.fastq");
+			unless (-e ("$path/query/$filename2.fastq")) {
+				copy("$path/$file/$fastqFiles[0]", "$path/query/$filename2.fastq");
 			}
 		}
 	}
 }
 print "Processing fastq files\n";
 # Get the target files from the folder
-#my $filesPath = "/media/nas/akoziol/WGS/RawReadSipping/target";
-my $filesPath = "/home/blais/git/RawReadSipping/target";
-#my $filesPath = "/home/blais/git/RawReadSipping/oldTarget";
+
+#my $filesPath = "/home/blais/git/geneSippr/target";
 chdir ("$filesPath");
 
 # Get the names of the two folder with target sequences
@@ -204,14 +234,11 @@ while (defined(my $file = readdir(DIR))) {
 	# Ignore special files
 	next if $file =~ /^\.\.?$/;
 	# Ignore folders without sequence data
-	next if $file =~ /holding/;
-	if ($file =~ /test0/) {
-		if (-d $filesPath . "/" . $file) {
-			push(@categories, $file);
-			chdir $filesPath . "/" . $file;
-			my @targetGenes = glob("*.fa");
-			$targetCategories{$file} = \@targetGenes;
-	}
+	if (-d $filesPath . "/" . $file) {
+		push(@categories, $file);
+		chdir $filesPath . "/" . $file;
+		my @targetGenes = glob("*.fa");
+		$targetCategories{$file} = \@targetGenes;
 	}
 }
 
@@ -281,7 +308,7 @@ foreach my $file (@fastq) {
 
 # Print results to report - make appropriate path, and open file
 my $reportPath = $path . "/reports";
-make_path($reportPath, {owner => "blais", group => "blais", mode => 0777});
+make_path($reportPath);
 chdir("$reportPath");
 
 open(REPORT, ">", "GeneSipprReport" . $start_time . ".csv") or die $!;
