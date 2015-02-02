@@ -34,7 +34,7 @@ parser.add_argument('-v', '--version', action='version', version='%(prog)s v1.0'
 parser.add_argument('-i', '--input', required=True, help='Specify input directory')
 parser.add_argument('-l', '--readLength', required=True, help='Specify list of read lengths to be used e.g. 18, 19, 20, 21, 22')
 parser.add_argument('-f', '--foldCoverage', required=True, help='Specify list of fold coverage values to be used e.g. 1, 1.5, 2, 2.5, 5')
-parser.add_argument('-k', '--kmerLength', required=True, help='Specify list of kmer lengths to be used e.g. 1, 1.5, 2, 2.5, 5')
+parser.add_argument('-k', '--kmerLength', required=True, help='Specify list of kmer lengths to be used e.g. 5, 7, 11')
 
 # Get the arguments into a list
 args = vars(parser.parse_args())

@@ -40,7 +40,7 @@ $ap->add_arg('--miseqPath', '-m', required => 1, help => 'The path of the folder
 $ap->add_arg('--folderPath', '-f', required => 1, help => 'The path of the folder in which to place the output folder');
 $ap->add_arg('--outPath', '-o', required => 1, help => 'The name of the output folder');
 $ap->add_arg('--targetPath', '-t', required => 1, help => 'The path of the folder that contains the target sequences');
-$ap->add_arg('--readLength', '-r', required => 0, help => 'Optional. Specify the the length of forward reads to use');
+$ap->add_arg('--readLength', '-r', required => 0, help => 'Optional. Specify the length of forward reads to use');
 $ap->add_arg('--project', '-p', required => 0, help => 'Optional. Specify the name of the project');
 
 
